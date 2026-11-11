@@ -1,9 +1,12 @@
-use clap::{Parser, Subcommand, error};
+use clap::{Parser, Subcommand};
+use serde::Deserialize;
 
-use std::path::Path;
+use std::collections::HashMap;
 use std::process::Command;
+use std::{io::Write, path::Path};
 
 use crate::macros::*;
+use reqwest::blocking::ClientBuilder;
 
 /// Trait for execute a command
 pub trait Execute {
@@ -13,19 +16,23 @@ pub trait Execute {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Installs the classes within `./tex`
+    /// Installs the classes listed in file
     Install {
-        /// asdsds
-        #[arg(short='i', long="input")]
-        class_dir: String
+        #[arg(short = 'i', long = "input")]
+        class_file: String,
+
+        #[arg(short = 't', long = "token")]
+        token: String,
     },
 
     /// Uninstalls the user-defined classes
     Uninstall,
 
-
-    /// Updates the classes if there's a newer version o the repository
-    Update,
+    /// Checks for updates
+    CheckUpdate {
+        #[arg(short = 'i', long = "input")]
+        class_file: String,
+    },
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -45,16 +52,16 @@ impl Program {
 impl Execute for Commands {
     fn execute(&self) {
         match self {
-            Self::Install{class_dir} => self._install(class_dir),
+            Self::Install { class_file, token } => self._install(class_file, token),
             Self::Uninstall => self._uninstall(),
-            Self::Update => self._update(),
+            Self::CheckUpdate{class_file} => self._check_update(class_file),
         }
     }
 }
 
 impl Commands {
     /// Installs the classes defined within `.tex`
-    fn _install(&self, class_dir: &String) {
+    fn _install(&self, class_file: &String, token: &str) {
         let c = Command::new("kpsewhich")
             .arg("-var-value=TEXMFHOME")
             .output();
@@ -70,7 +77,7 @@ impl Commands {
         let result = match String::from_utf8(output.stdout) {
             Ok(v) => v,
             Err(e) => {
-                error!(e); 
+                error!(e);
                 std::process::exit(1);
             }
         };
@@ -80,36 +87,58 @@ impl Commands {
         // Add class base path
         let classes = Path::new(texmf_home).join("tex").join("latex");
 
-        let dirs = match std::fs::read_dir(class_dir) {
-            Ok(v) => v,
+        match std::fs::exists(class_file) {
+            Ok(_) => {}
             Err(e) => {
                 error!(e);
                 std::process::exit(1);
             }
         };
 
+        let user_home = std::env::var("HOME").unwrap();
+        let (dirname, filename) = get_env();
+        let file_path = Path::new(&user_home).join(&dirname);
+        info!(format!("Created configuration file at {:?}", file_path));
+
+        match std::fs::create_dir(&file_path) {
+            Ok(_) => {}
+            Err(_) => {
+                warning!(format!("{:?} already exists", file_path));
+            }
+        }
+
         // Create directories recursivelly based on the classes within `./tex`
         info!("Installing classes...");
         let mut install_count = 0;
-        for file in std::fs::read_dir(class_dir)
-            .unwrap()
-            .filter(|x| x.as_ref().unwrap().path().extension().unwrap() == "cls")
-            .map(|x| x.unwrap().path()) {
-            // Creating file
-            let dirname = classes.join(file.file_stem().unwrap());
-            std::fs::create_dir_all(&dirname).unwrap();
 
-            // Copying file
-            let dst = dirname.join(file.file_name().unwrap());
-            std::fs::copy(&file, &dst);
-            info!(format!("\t {:?} -> {:?}", file.file_name().unwrap(), dst));
+        let buf = std::fs::read_to_string(class_file).unwrap();
+        let mut version_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(file_path.join(filename))
+            .unwrap();
+
+        for (i, line) in buf.split("\n").enumerate() {
+            let url_parts: Vec<&str> = line.trim().split("/").collect();
+            let gist_id = url_parts[url_parts.len() - 1 as usize];
+            let info = get_info(gist_id, token);
+            let file = info.files.iter().nth(i).unwrap();
+            let version = info.history.iter().nth(i).unwrap().version.clone();
+            info!(format!("\t {} -> {}", file.0, version));
+            version_file
+                .write(format!("{};{version}", file.0).as_bytes())
+                .unwrap();
             install_count += 1;
         }
-        
+
         if install_count == 0 {
             warning!("No '.cls' were found in './tex'.");
         } else {
-            let msg = format!("{} were installed successfully at {:?}", install_count, classes.canonicalize().unwrap());
+            let msg = format!(
+                "{} were installed successfully at {:?}",
+                install_count,
+                classes.canonicalize().unwrap()
+            );
             info!(msg);
         }
     }
@@ -119,8 +148,81 @@ impl Commands {
         todo!();
     }
 
-    /// Checks the main branch if there's a newer version o the repository, and update the classes
-    fn _update(&self) {
-        todo!();
+    /// checks updates
+    fn _check_update(&self, class_file: &String) {
+        let client = ClientBuilder::new()
+            .user_agent("TeX-Setup/0.1.0")
+            .build()
+            .unwrap();
+
+        for gist in std::fs::read_to_string(class_file).unwrap().split("\n") {
+            let gist_id = gist.split("/").last().unwrap();
+            let msg = format!("Checking updates for {gist_id}...");
+            info!(msg);
+            let result = client
+                .get(format!("https://api.github.com/gists/{gist_id}"))
+                // .header("Authorization", format!("Bearer {token}"))
+                .send()
+                .unwrap();
+    
+            let gist: GistCommit = result.json().unwrap();
+    
+            let user_home = std::env::var("HOME").unwrap();
+            let (dirname, filename) = get_env();
+            let path = Path::new(&user_home).join(&dirname).join(&filename);
+            let file_contents = std::fs::read_to_string(path).unwrap();
+            
+            let mut requires_update = false;
+            for line in file_contents.split("\n") {
+                let line: Vec<&str> = line.split(";").collect();
+                let (filename, version) = (line[0], line[1]);
+    
+                if !gist.history[0].version.eq(version) {
+                    warning!(format!("{filename} requires update!"));
+                    requires_update = true;
+                }
+            }
+
+            if requires_update {
+                info!("To update re-run the tool using the install option!");
+            } else {
+                info!("Everything is up to date!");
+            }
+        }
     }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct GistCommit {
+    pub files: HashMap<String, File>,
+    pub history: Vec<History>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct File { }
+
+#[derive(Deserialize, Debug)]
+pub struct History {
+    version: String,
+}
+
+fn get_info(gist_id: &str, token: &str) -> GistCommit {
+    let client = ClientBuilder::new()
+        .user_agent("TeX-Setup/0.1.0")
+        .build()
+        .unwrap();
+    let result = client
+        .get(format!("https://api.github.com/gists/{gist_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .unwrap();
+
+    result.json().unwrap()
+}
+
+fn get_env() -> (String, String) {
+    let dirname = env!("CONFIGURATION_DIRNAME").trim_matches(|c| c == '"' || c == '\'');
+    let filename = env!("CONFIGURATION_FILENAME").trim_matches(|c| c == '"' || c == '\'');
+
+    (dirname.to_string(), filename.to_string())
 }

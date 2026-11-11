@@ -1,4 +1,3 @@
-
 #[doc(hidden)]
 pub use colored::Colorize as _colorize;
 
@@ -20,6 +19,6 @@ macro_rules! warning {
     };
 }
 
-pub (crate) use error;
-pub (crate) use info;
-pub (crate) use warning;
+pub(crate) use error;
+pub(crate) use info;
+pub(crate) use warning;

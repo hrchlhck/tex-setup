@@ -1,17 +1,14 @@
-#![allow(unused)]
-
 mod cli;
 mod macros;
 
 use clap::Parser;
 
-use crate::cli::{
-    Commands::{Install, Uninstall},
-    Execute,
-};
+use crate::cli::Execute;
 
 fn main() {
     let args = cli::Program::parse();
 
-    args.command().execute();
+    let cmd = args.command();
+
+    cmd.execute();
 }
