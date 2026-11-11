@@ -1,5 +1,6 @@
 mod cli;
 mod macros;
+mod gist;
 
 use clap::Parser;
 

@@ -1,11 +1,9 @@
 use clap::{Parser, Subcommand};
-use serde::Deserialize;
-
-use std::collections::HashMap;
 use std::process::Command;
 use std::{io::Write, path::Path};
 
 use crate::macros::*;
+use crate::gist::{GistCommit, get_info};
 use reqwest::blocking::ClientBuilder;
 
 /// Trait for execute a command
@@ -62,30 +60,11 @@ impl Execute for Commands {
 impl Commands {
     /// Installs the classes defined within `.tex`
     fn _install(&self, class_file: &String, token: &str) {
-        let c = Command::new("kpsewhich")
-            .arg("-var-value=TEXMFHOME")
-            .output();
-
-        let output = match c {
-            Ok(v) => v,
-            Err(e) => {
-                error!(e);
-                std::process::exit(1);
-            }
-        };
-
-        let result = match String::from_utf8(output.stdout) {
-            Ok(v) => v,
-            Err(e) => {
-                error!(e);
-                std::process::exit(1);
-            }
-        };
-        let texmf_home = result.trim();
+        let texmf_home = get_texmf_home();
         info!(format!("Using {texmf_home} as TEXMFHOME"));
 
         // Add class base path
-        let classes = Path::new(texmf_home).join("tex").join("latex");
+        let classes = Path::new(&texmf_home).join("tex").join("latex");
 
         match std::fs::exists(class_file) {
             Ok(_) => {}
@@ -145,7 +124,27 @@ impl Commands {
 
     /// Uninstalls the user-specified classes
     fn _uninstall(&self) {
-        todo!();
+        let texmf_home = get_texmf_home();
+
+        info!(format!("Using {texmf_home} as TEXMFHOME"));
+
+        // Add class base path
+        let classes = Path::new(&texmf_home).join("tex").join("latex");
+
+        for entry in std::fs::read_dir(classes).unwrap().map(|x| x.unwrap()) {
+            if entry.path().is_dir() {
+                std::fs::remove_dir_all(&entry.path()).unwrap();
+                info!(format!("Removed {:?}", entry.path().as_os_str()));
+            }
+        }
+
+        let (dirname, _) = get_env();
+        let home = std::env::var("HOME").unwrap();
+        let home_path = Path::new(&home).join(dirname);
+        std::fs::remove_dir_all(&home_path).unwrap();
+        info!(format!("Removed configuration files at {home_path:?}"));
+
+        info!("tex-setup uninstalled successfully");
     }
 
     /// checks updates
@@ -192,37 +191,33 @@ impl Commands {
     }
 }
 
-#[derive(Deserialize, Debug)]
-pub struct GistCommit {
-    pub files: HashMap<String, File>,
-    pub history: Vec<History>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct File { }
-
-#[derive(Deserialize, Debug)]
-pub struct History {
-    version: String,
-}
-
-fn get_info(gist_id: &str, token: &str) -> GistCommit {
-    let client = ClientBuilder::new()
-        .user_agent("TeX-Setup/0.1.0")
-        .build()
-        .unwrap();
-    let result = client
-        .get(format!("https://api.github.com/gists/{gist_id}"))
-        .header("Authorization", format!("Bearer {token}"))
-        .send()
-        .unwrap();
-
-    result.json().unwrap()
-}
-
 fn get_env() -> (String, String) {
     let dirname = env!("CONFIGURATION_DIRNAME").trim_matches(|c| c == '"' || c == '\'');
     let filename = env!("CONFIGURATION_FILENAME").trim_matches(|c| c == '"' || c == '\'');
 
     (dirname.to_string(), filename.to_string())
+}
+
+fn get_texmf_home() -> String{
+    let c = Command::new("kpsewhich")
+            .arg("-var-value=TEXMFHOME")
+            .output();
+
+    let output = match c {
+        Ok(v) => v,
+        Err(e) => {
+            error!(e);
+            std::process::exit(1);
+        }
+    };
+
+    let result = match String::from_utf8(output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(e);
+            std::process::exit(1);
+        }
+    };
+
+   result.trim().to_string()
 }
