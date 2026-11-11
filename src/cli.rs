@@ -111,7 +111,12 @@ impl Commands {
 
             let dir_name = Path::new(&file.0).file_stem().unwrap();
             let class_path = classes.join(dir_name);
-            std::fs::create_dir(&class_path).unwrap();
+            match std::fs::create_dir(&class_path) {
+                Ok(_) => {},
+                Err(_) => {
+                    warning!("File already exists. Updating with the newest version");
+                }
+            }
 
             let mut class_file = std::fs::OpenOptions::new()
                 .write(true)
