@@ -12,7 +12,9 @@ pub struct GistCommit {
 
 
 #[derive(Deserialize, Debug)]
-pub struct File { }
+pub struct File {
+    pub content: String
+ }
 
 #[derive(Deserialize, Debug)]
 pub struct History {

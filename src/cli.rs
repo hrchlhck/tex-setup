@@ -96,6 +96,7 @@ impl Commands {
             .create(true)
             .open(file_path.join(filename))
             .unwrap();
+        
 
         for (i, line) in buf.split("\n").enumerate() {
             let url_parts: Vec<&str> = line.trim().split("/").collect();
@@ -107,6 +108,18 @@ impl Commands {
             version_file
                 .write(format!("{};{version}", file.0).as_bytes())
                 .unwrap();
+
+            let dir_name = Path::new(&file.0).file_stem().unwrap();
+            let class_path = classes.join(dir_name);
+            std::fs::create_dir(&class_path).unwrap();
+
+            let mut class_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(class_path.join(file.0)).unwrap();
+
+            class_file.write(file.1.content.as_bytes()).unwrap();
+
             install_count += 1;
         }
 
