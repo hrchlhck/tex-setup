@@ -28,7 +28,7 @@
 Install directly via Cargo:
 
 ```sh
-cargo install --locked --git ssh://git@github.com/hrchlhck/tex-setup.git
+cargo install --locked --git https://github.com/hrchlhck/tex-setup.git
 ```
 
 ## Input File Format
