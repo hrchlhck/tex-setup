@@ -27,10 +27,7 @@ pub enum Commands {
     Uninstall,
 
     /// Checks for updates
-    CheckUpdate {
-        #[arg(short = 'i', long = "input")]
-        class_file: String,
-    },
+    CheckUpdate,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -52,7 +49,7 @@ impl Execute for Commands {
         match self {
             Self::Install { class_file, token } => self._install(class_file, token),
             Self::Uninstall => self._uninstall(),
-            Self::CheckUpdate{class_file} => self._check_update(class_file),
+            Self::CheckUpdate => self._check_update(),
         }
     }
 }
@@ -100,13 +97,13 @@ impl Commands {
 
         for (i, line) in buf.split("\n").enumerate() {
             let url_parts: Vec<&str> = line.trim().split("/").collect();
-            let gist_id = url_parts[url_parts.len() - 1 as usize];
+            let gist_id = url_parts[url_parts.len() - 1 as usize].trim();
             let info = get_info(gist_id, token);
             let file = info.files.iter().nth(i).unwrap();
             let version = info.history.iter().nth(i).unwrap().version.clone();
             info!(format!("\t {} -> {}", file.0, version));
             version_file
-                .write(format!("{};{version}", file.0).as_bytes())
+                .write(format!("{};{version};{gist_id}", file.0).as_bytes())
                 .unwrap();
 
             let dir_name = Path::new(&file.0).file_stem().unwrap();
@@ -166,29 +163,29 @@ impl Commands {
     }
 
     /// checks updates
-    fn _check_update(&self, class_file: &String) {
+    fn _check_update(&self) {
         let client = ClientBuilder::new()
             .user_agent("TeX-Setup/0.1.0")
             .build()
             .unwrap();
 
-        for gist in std::fs::read_to_string(class_file).unwrap().split("\n") {
-            let gist_id = gist.split("/").last().unwrap();
+        
+        let user_home = std::env::var("HOME").unwrap();
+        let (dirname, filename) = get_env();
+        let path = Path::new(&user_home).join(&dirname).join(&filename);
+        let file_contents = std::fs::read_to_string(path).unwrap();
+        
+        for gist in file_contents.split("\n") {
+            let gist_id = gist.split(";").last().unwrap();
             let msg = format!("Checking updates for {gist_id}...");
             info!(msg);
             let result = client
                 .get(format!("https://api.github.com/gists/{gist_id}"))
-                // .header("Authorization", format!("Bearer {token}"))
                 .send()
                 .unwrap();
     
             let gist: GistCommit = result.json().unwrap();
     
-            let user_home = std::env::var("HOME").unwrap();
-            let (dirname, filename) = get_env();
-            let path = Path::new(&user_home).join(&dirname).join(&filename);
-            let file_contents = std::fs::read_to_string(path).unwrap();
-            
             let mut requires_update = false;
             for line in file_contents.split("\n") {
                 let line: Vec<&str> = line.split(";").collect();
